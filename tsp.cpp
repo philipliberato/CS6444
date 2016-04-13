@@ -140,15 +140,6 @@ void master() {
 
 //----Recieve more requests and respond-----//
 	while (!empty) { //queue is not empty
-		// Get next thing of work
-		work = mystack.top();
-		mystack.pop();
-		for (int i = 0; i < work.size(); i++) {
-			cout << work[i] << " ";
-		}
-		cout << endl;
-
-		int tmpwork = 0;
 
 		message.resize(NUM_CITIES+1);
 
@@ -172,16 +163,16 @@ void master() {
 		}
 		cout << endl;
 
-		work.swap(message);
+		vector<int> tmpwork(message);
 
 		// Check if current sum is already worse than best
 		if (result > best) {
-			continue;
+			
 		}
 		else {
 //-----------Spawn more work-----------//
 			vector<int> diff;
-			set_difference(all_cities.begin(),all_cities.end(), work.begin(), work.end(),inserter(diff,diff.end()));
+			set_difference(all_cities.begin(),all_cities.end(), tmpwork.begin(), tmpwork.end(),inserter(diff,diff.end()));
 
 			cout << "DIFF: ";
 			for (int i = 0; i < diff.size(); i++) {
@@ -202,7 +193,7 @@ void master() {
 			else { // ALSO add jobs to queue
 				// Generate work
 				for (int i = 0; i < diff.size(); i++) {
-					vector<int> new_work(work);
+					vector<int> new_work(tmpwork);
 					new_work[NUM_CITIES-diff.size()] = diff[i];
 
 					
@@ -223,8 +214,19 @@ void master() {
 			best = result;
 		}*/
 
-		// Respond with more work
 
+		// idk where this goes
+		empty = mystack.empty();
+
+		// Get next thing of work
+		work = mystack.top();
+		mystack.pop();
+		for (int i = 0; i < work.size(); i++) {
+			cout << work[i] << " ";
+		}
+		cout << endl;
+
+		// Respond with more work
 		MPI_Send(&work[0], /* message buffer */
 		NUM_CITIES,     /* one data item */
 		MPI_INT,        /* data item is an integer */
@@ -233,9 +235,6 @@ void master() {
 		MPI_COMM_WORLD);/* always use this */
 
 		count++;
-
-		
-		empty = mystack.empty();
 		
 	}
 
