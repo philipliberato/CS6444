@@ -21,19 +21,21 @@ using namespace std;
 #define WORKTAG    1
 #define DIETAG     2
 #define NUM_CITIES 5		 	// change depending on city file
+#define NUM_CITIES_1 NUM_CITIES+1
 char filename[] = "city5.txt";	// change depending on city file
 
 void master();
 void worker();
 void inCities();
 void printCities();
+int factorial(int n);
 
 int myrank, ntasks, best;
 double elapsed_time;
 int cities[NUM_CITIES][NUM_CITIES];
 vector<int> all_cities;
 
-stack< vector<int> > mystack; //NEED TO SYNCHRONIZE
+stack< vector<int> > mystack;
 
 
 int main(int argc, char *argv[]) {
@@ -81,99 +83,100 @@ int main(int argc, char *argv[]) {
 //*****************************************//
 void master() {
 	int rank, result;
+	int fact = factorial(NUM_CITIES);
 	MPI_Status status;
 
 //-----------Set up the Queue-----------//
 	// Probably don't need to synchronize initially lol
 	for (int i = 2; i <= NUM_CITIES; ++i) {
-		vector<int> tmp(NUM_CITIES,0);
+		vector<int> tmp(NUM_CITIES_1,0);
 		tmp[0] = 1;
 		tmp[1] = i;
+		tmp[NUM_CITIES] = 1;
 		mystack.push(tmp);
 	}
+		
 
-	// Print queue for testing, also it's gone now lol
-	/*
-	std::cout << "Popping out elements...";
-	while (!mystack.empty())
-	{
-	 std::cout << ' ' << mystack.top();
-	 mystack.pop();
-	}
-	std::cout << '\n';
-	*/
-	
-	
+	vector<int> work(NUM_CITIES_1,0);
 
-	
 //------------Seed workers--------------//
 	for (rank = 1; rank < ntasks; ++rank) {
 		// Get next thing of work
-		
-		vector<int> work = mystack.top();
+		work = mystack.top();
 		mystack.pop();
 		
+		// Print for testing
+		cout << "Work: ";
 		for (int i = 0; i < work.size(); i++) {
 			cout << work[i] << " ";
 		}
-		int tmpwork = 0;
 		cout << endl;
 
 		MPI_Send(&work[0], /* message buffer */
-		NUM_CITIES,     /* one data item */
-		MPI_INT,        /* data item is an integer */
-		rank,           /* destination process rank */
-		WORKTAG,        /* user chosen message tag */
-		MPI_COMM_WORLD);/* always use this */
+		NUM_CITIES_1,      /* length */
+		MPI_INT,           /* data item is an integer */
+		rank,              /* destination process rank */
+		WORKTAG,           /* user chosen message tag */
+		MPI_COMM_WORLD);   /* always use this */
 
 	}
 
 	printf("Seeded workers\n");
 
+	
+	int count = 1;
 
-	int count = 0;
+	bool empty = false;
 	
-	bool empty = mystack.empty();
-	
-	vector<int> message(NUM_CITIES+1,0);
-	vector<int> work(NUM_CITIES,0);
+	vector<int> message(NUM_CITIES+2,0);
+	vector<int> diff;
 
 //----Recieve more requests and respond-----//
 	while (!empty) { //queue is not empty
 
-		message.resize(NUM_CITIES+1);
+		message.resize(NUM_CITIES+2);
 
 		// Recieve request
 		MPI_Recv(&message[0],/* message buffer */
-		NUM_CITIES+1,               /* one data item */
-		MPI_INT,      /* of type double real */
-		MPI_ANY_SOURCE,  /* receive from any sender */
-		MPI_ANY_TAG,     /* any type of message */
-		MPI_COMM_WORLD,  /* always use this */
-		&status);        /* received message info */
+		NUM_CITIES+2,        /* length */
+		MPI_INT,             /* type int */
+		MPI_ANY_SOURCE,  	 /* receive from any sender */
+		MPI_ANY_TAG,     	 /* any type of message */
+		MPI_COMM_WORLD,   	 /* always use this */
+		&status);        	 /* received message info */
 
 		result = message.back();
 		message.pop_back();
 
-
 		printf("Result: %d from Rank: %d\n",result,status.MPI_SOURCE);
-		cout << "Message: ";
-		for (int i = 0; i < message.size(); i++) {
-			cout << message[i] << " ";
-		}
-		cout << endl;
+
 
 		vector<int> tmpwork(message);
+		vector<int> tmpworksorted(tmpwork);
+
+		// Print for testing
+		cout << "tmpwork: ";
+		for (int i = 0; i < tmpwork.size(); i++) {
+			cout << tmpwork[i] << " ";
+		}
+		cout << endl;
 
 		// Check if current sum is already worse than best
 		if (result > best) {
 			
 		}
 		else {
+			cout << "Spawn more work\n";
 //-----------Spawn more work-----------//
-			vector<int> diff;
-			set_difference(all_cities.begin(),all_cities.end(), tmpwork.begin(), tmpwork.end(),inserter(diff,diff.end()));
+			vector<int> diff(NUM_CITIES_1,0);
+			vector<int>::iterator it;
+			sort(tmpworksorted.begin(),tmpworksorted.end());
+			//set_difference(all_cities.begin(), all_cities.end(), tmpwork.begin(), tmpwork.end(),inserter(diff,diff.end()));
+			it = set_difference(all_cities.begin(), all_cities.end(), tmpworksorted.begin(), tmpworksorted.end(),diff.begin());
 
+			diff.resize(it-diff.begin());
+
+			// Print for testing
 			cout << "DIFF: ";
 			for (int i = 0; i < diff.size(); i++) {
 				cout << diff[i] << " ";
@@ -183,19 +186,35 @@ void master() {
 
 //-----------Share answer???-----------//
 
-			// if all values in 'work' are not 0, send result
+			// If all values in 'work' are not 0, send result
 			if (diff.size() == 0) {
+				// maybe update best
 				if (result < best) {
 					best = result;
+					cout << "UPDATED BEST: " << best << endl;
 				}
 			}
-			// else send INT_MAX
-			else { // ALSO add jobs to queue
+			// If only 2 entries are left, we can just fill them in
+			// And push 2 more work pieces
+			else if (diff.size() == 2) {
+				// Generate work
+				vector<int> new_work(tmpwork);
+				new_work[NUM_CITIES-2] = diff[0];
+				new_work[NUM_CITIES-1] = diff[1];
+				
+				mystack.push(new_work);
+
+				vector<int> new_work2(tmpwork);
+				new_work2[NUM_CITIES-2] = diff[1];
+				new_work2[NUM_CITIES-1] = diff[0];
+				
+				mystack.push(new_work2);
+			}	
+			else {
 				// Generate work
 				for (int i = 0; i < diff.size(); i++) {
 					vector<int> new_work(tmpwork);
 					new_work[NUM_CITIES-diff.size()] = diff[i];
-
 					
 					mystack.push(new_work);
 					
@@ -209,14 +228,14 @@ void master() {
 				}
 			}
 		}
-		// Potentially update best
-		/*if (result < best) {
-			best = result;
-		}*/
-
 
 		// idk where this goes
 		empty = mystack.empty();
+
+		if (empty) {
+			break;
+		}
+
 
 		// Get next thing of work
 		work = mystack.top();
@@ -228,20 +247,19 @@ void master() {
 
 		// Respond with more work
 		MPI_Send(&work[0], /* message buffer */
-		NUM_CITIES,     /* one data item */
+		NUM_CITIES_1,     /* one data item */
 		MPI_INT,        /* data item is an integer */
 		status.MPI_SOURCE, /* destination process rank */
 		WORKTAG,        /* user chosen message tag */
 		MPI_COMM_WORLD);/* always use this */
 
 		count++;
-		
 	}
 
 	printf("Telling workers to exit\n");
 
 //--------Recieve final reqests---------//
-	for (rank = 1; rank < ntasks; ++rank) {
+	/*for (rank = 1; rank < ntasks; ++rank) {
 		MPI_Recv(&result, 1, MPI_INT, MPI_ANY_SOURCE,
 		MPI_ANY_TAG, MPI_COMM_WORLD, &status);
 
@@ -252,11 +270,12 @@ void master() {
 		}
 
 		printf("Received final request from %d\n",status.MPI_SOURCE);
-	}
+	}*/
 
 //--------Tell workers to die----------//
 	for (rank = 1; rank < ntasks; ++rank) {
-		MPI_Send(0, 0, MPI_INT, rank, DIETAG, MPI_COMM_WORLD);
+		work.resize(NUM_CITIES_1);
+		MPI_Send(&work[0], NUM_CITIES_1, MPI_INT, rank, DIETAG, MPI_COMM_WORLD);
 
 		printf("Sent dietag to %d\n",rank);
 	}
@@ -288,9 +307,9 @@ void worker() {
 		sum = 0;
 
 		// Reset work
-		work.resize(NUM_CITIES);
+		work.resize(NUM_CITIES_1);
 		// Recieve work
-		MPI_Recv(&work[0], NUM_CITIES, MPI_INT, 0, MPI_ANY_TAG,
+		MPI_Recv(&work[0], NUM_CITIES_1, MPI_INT, 0, MPI_ANY_TAG,
 		MPI_COMM_WORLD, &status);
 
 		// Check for die tag
@@ -307,8 +326,8 @@ void worker() {
 
 //-----------DO WORK-----------//
 		// COMPUTE SUM
-		for (int i = 0; i < NUM_CITIES; i++) {
-			if ((i+1) < NUM_CITIES) {
+		for (int i = 0; i < NUM_CITIES_1; i++) {
+			if ((i+1) < NUM_CITIES_1) {
 				
 				int val1 = work[i];
 				int val2 = work[i+1];
@@ -324,7 +343,7 @@ void worker() {
 		message.push_back(sum);
 
 		// Send a request for more work
-		MPI_Send(&message[0], NUM_CITIES+1, MPI_INT, 0, 0, MPI_COMM_WORLD);
+		MPI_Send(&message[0], NUM_CITIES+2, MPI_INT, 0, 0, MPI_COMM_WORLD);
 
 		//printf("Rank %d requesting more work\n",myrank);
 	}
@@ -355,4 +374,9 @@ void printCities() {
 	    }   
 	    cout << endl;
 	}
+}
+
+// Taken from: http://www.cplusplus.com/forum/unices/33379/
+int factorial(int n) {
+  return (n == 1 || n == 0) ? 1 : factorial(n - 1) * n;
 }
