@@ -1,4 +1,10 @@
-// prod-cons.c
+// This version pre-generates the search space,
+// then prunes it
+
+// Whereas the other version generated one layer of the tree at a time,
+// one branch at a time
+
+// tsp.cpp
 
 // Code skeleton orignally from:
 // http://www.hpc.cam.ac.uk/using-clusters/compiling-and-development/parallel-programming-mpi-example
@@ -20,9 +26,9 @@ using namespace std;
 
 #define WORKTAG    1
 #define DIETAG     2
-#define NUM_CITIES 5		 	// change depending on city file
+#define NUM_CITIES 17		 	// change depending on city file
 #define NUM_CITIES_1 NUM_CITIES+1
-char filename[] = "city5.txt";	// change depending on city file
+char filename[] = "city17.txt";	// change depending on city file
 
 void master();
 void worker();
@@ -57,11 +63,11 @@ int main(int argc, char *argv[]) {
 	}
 
 	// Print for testing
-	cout << "ALL CITIES: ";
+	/*cout << "ALL CITIES: ";
 	for (int i = 0; i < NUM_CITIES; i++) {
 		cout << all_cities[i] << " ";
 	}
-	cout << endl;
+	cout << endl;*/
 
 	// Set best to 'infinity'
 	best = INT_MAX;
@@ -85,6 +91,7 @@ void master() {
 	int rank, result;
 	int fact = factorial(NUM_CITIES);
 	MPI_Status status;
+	vector<int> best_path(NUM_CITIES_1,0);
 
 //-----------Set up the Queue-----------//
 	// Probably don't need to synchronize initially lol
@@ -98,6 +105,7 @@ void master() {
 		
 
 	vector<int> work(NUM_CITIES_1,0);
+	int pending_jobs = 0;
 
 //------------Seed workers--------------//
 	for (rank = 1; rank < ntasks; ++rank) {
@@ -106,11 +114,11 @@ void master() {
 		mystack.pop();
 		
 		// Print for testing
-		cout << "Work: ";
+		/*cout << "Work: ";
 		for (int i = 0; i < work.size(); i++) {
 			cout << work[i] << " ";
 		}
-		cout << endl;
+		cout << endl;*/
 
 		MPI_Send(&work[0], /* message buffer */
 		NUM_CITIES_1,      /* length */
@@ -119,6 +127,11 @@ void master() {
 		WORKTAG,           /* user chosen message tag */
 		MPI_COMM_WORLD);   /* always use this */
 
+		pending_jobs++;
+
+		if (mystack.empty()) {
+			break;
+		}
 	}
 
 	printf("Seeded workers\n");
@@ -126,13 +139,12 @@ void master() {
 	
 	int count = 1;
 
-	bool empty = false;
 	
 	vector<int> message(NUM_CITIES+2,0);
 	vector<int> diff;
 
 //----Recieve more requests and respond-----//
-	while (!empty) { //queue is not empty
+	while (!mystack.empty() || pending_jobs != 0) { //queue is not empty
 
 		message.resize(NUM_CITIES+2);
 
@@ -145,28 +157,30 @@ void master() {
 		MPI_COMM_WORLD,   	 /* always use this */
 		&status);        	 /* received message info */
 
+		pending_jobs--;
+
 		result = message.back();
 		message.pop_back();
 
-		printf("Result: %d from Rank: %d\n",result,status.MPI_SOURCE);
+		//printf("Result: %d from Rank: %d\n",result,status.MPI_SOURCE);
 
 
 		vector<int> tmpwork(message);
 		vector<int> tmpworksorted(tmpwork);
 
 		// Print for testing
-		cout << "tmpwork: ";
+		/*cout << "tmpwork: ";
 		for (int i = 0; i < tmpwork.size(); i++) {
 			cout << tmpwork[i] << " ";
 		}
-		cout << endl;
+		cout << endl;*/
 
 		// Check if current sum is already worse than best
 		if (result > best) {
 			
 		}
 		else {
-			cout << "Spawn more work\n";
+			//cout << "Spawn more work\n";
 //-----------Spawn more work-----------//
 			vector<int> diff(NUM_CITIES_1,0);
 			vector<int>::iterator it;
@@ -177,11 +191,11 @@ void master() {
 			diff.resize(it-diff.begin());
 
 			// Print for testing
-			cout << "DIFF: ";
+			/*cout << "DIFF: ";
 			for (int i = 0; i < diff.size(); i++) {
 				cout << diff[i] << " ";
 			}
-			cout << endl;
+			cout << endl;*/
 
 
 //-----------Share answer???-----------//
@@ -191,6 +205,7 @@ void master() {
 				// maybe update best
 				if (result < best) {
 					best = result;
+					best_path = tmpwork;
 					cout << "UPDATED BEST: " << best << endl;
 				}
 			}
@@ -218,32 +233,37 @@ void master() {
 					
 					mystack.push(new_work);
 					
-					// Print
-					cout << "NEW WORK: ";
+					// Print for testing
+					/*cout << "NEW WORK: ";
 					for (int j =0; j < new_work.size(); j++) {
 						cout << new_work[j] << " ";
 					}
-					cout << endl;
+					cout << endl;*/
 					
 				}
 			}
 		}
 
 		// idk where this goes
-		empty = mystack.empty();
-
-		if (empty) {
-			break;
+		if (mystack.empty()) {
+			if (pending_jobs == 0) {
+				break;
+			}
+			else {
+				continue;
+			}
 		}
 
 
 		// Get next thing of work
 		work = mystack.top();
 		mystack.pop();
-		for (int i = 0; i < work.size(); i++) {
+		
+		// Print for testing
+		/*for (int i = 0; i < work.size(); i++) {
 			cout << work[i] << " ";
 		}
-		cout << endl;
+		cout << endl;*/
 
 		// Respond with more work
 		MPI_Send(&work[0], /* message buffer */
@@ -253,7 +273,7 @@ void master() {
 		WORKTAG,        /* user chosen message tag */
 		MPI_COMM_WORLD);/* always use this */
 
-		count++;
+		pending_jobs++;
 	}
 
 	printf("Telling workers to exit\n");
@@ -277,10 +297,16 @@ void master() {
 		work.resize(NUM_CITIES_1);
 		MPI_Send(&work[0], NUM_CITIES_1, MPI_INT, rank, DIETAG, MPI_COMM_WORLD);
 
-		printf("Sent dietag to %d\n",rank);
+		//printf("Sent dietag to %d\n",rank);
 	}
 
 	printf("Best: %d\n",best);
+
+	cout << "Best path: ";
+	for (int i = 0; i < best_path.size(); i++) {
+		cout << best_path[i] << " ";
+	}
+	cout << endl;
 
 	// Get elapsed time
 	elapsed_time += MPI_Wtime();
@@ -318,11 +344,11 @@ void worker() {
 		}
 
 		// Print for testing
-		cout << "Rank: " << myrank << " received: ";
+		/*cout << "Rank: " << myrank << " received: ";
 		for (int i = 0; i < work.size(); i++) {
 			cout << work[i] << " ";
 		}
-		cout << endl;
+		cout << endl;*/
 
 //-----------DO WORK-----------//
 		// COMPUTE SUM
