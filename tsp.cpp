@@ -22,13 +22,15 @@
 #include <algorithm>
 #include <set>
 #include <iterator>
+#include <queue>
+#include <functional>
 using namespace std;
 
 #define WORKTAG    1
 #define DIETAG     2
-#define NUM_CITIES 4		 	// change depending on city file
+#define NUM_CITIES 17		 	// change depending on city file
 #define NUM_CITIES_1 NUM_CITIES-1
-char filename[] = "city4.txt";	// change depending on city file
+char filename[] = "city17.txt";	// change depending on city file
 
 void master();
 void worker();
@@ -40,7 +42,42 @@ double elapsed_time;
 int cities[NUM_CITIES][NUM_CITIES];
 vector<int> all_cities;
 
-stack< vector<int> > mystack;
+
+// custom class for comparing vector<ints>
+class Compare
+{
+public:
+    bool operator() (vector<int> a, vector<int> b) {
+		// count zeroes in a and b
+		int a_zeroes, b_zeroes = 0;
+		
+		for (int i = 0; i < a.size(); i++) {
+			if (a[i] == 0) {
+				a_zeroes++;
+			}
+		}
+		for (int i = 0; i < b.size(); i++) {
+			if (b[i] == 0) {
+				b_zeroes++;
+			}
+		}
+
+		if (a_zeroes > b_zeroes) {
+			return true;
+		}
+		else if (a_zeroes < b_zeroes) {
+			return false;
+		}
+		else { //same number of zeroes
+			//return a > b;
+			return false;
+		}
+		//return (a<b);
+	}
+};
+
+//stack< vector<int> > mystack;
+priority_queue<vector<int>, vector<vector<int> >, Compare > mystack;
 
 
 int main(int argc, char *argv[]) {
@@ -161,11 +198,11 @@ void master() {
 		vector<int> tmpworksorted(tmpwork);
 
 		// Print for testing
-		cout << result << "  tmpwork: ";
+		/*cout << result << "  tmpwork: ";
 		for (int i = 0; i < tmpwork.size(); i++) {
 			cout << tmpwork[i] << " ";
 		}
-		cout << endl;
+		cout << endl;*/
 
 		// Check if current sum is already worse than best
 		if (result > best) {
@@ -250,7 +287,8 @@ void master() {
 		mystack.pop();
 		
 		// Print for testing
-		/*for (int i = 0; i < work.size(); i++) {
+		/*cout << "Work: ";
+		for (int i = 0; i < work.size(); i++) {
 			cout << work[i] << " ";
 		}
 		cout << endl;*/
@@ -333,11 +371,11 @@ void worker() {
 		}
 
 		// Print for testing
-		cout << "Rank: " << myrank << " received: ";
+		/*cout << "Rank: " << myrank << " received: ";
 		for (int i = 0; i < work.size(); i++) {
 			cout << work[i] << " ";
 		}
-		cout << endl;
+		cout << endl;*/
 
 //-----------DO WORK-----------//
 		// COMPUTE SUM
@@ -360,7 +398,7 @@ void worker() {
 			}
 		}
 
-		
+
 		vector<int> message(work);
 		message.push_back(sum);
 
