@@ -26,15 +26,14 @@ using namespace std;
 
 #define WORKTAG    1
 #define DIETAG     2
-#define NUM_CITIES 17		 	// change depending on city file
-#define NUM_CITIES_1 NUM_CITIES+1
-char filename[] = "city17.txt";	// change depending on city file
+#define NUM_CITIES 4		 	// change depending on city file
+#define NUM_CITIES_1 NUM_CITIES-1
+char filename[] = "city4.txt";	// change depending on city file
 
 void master();
 void worker();
 void inCities();
 void printCities();
-int factorial(int n);
 
 int myrank, ntasks, best;
 double elapsed_time;
@@ -58,7 +57,7 @@ int main(int argc, char *argv[]) {
 	MPI_Comm_size(MPI_COMM_WORLD, &ntasks);
 
 	// Set up all cities vector
-	for (int i = 1; i <= NUM_CITIES; i++) {
+	for (int i = 2; i <= NUM_CITIES; i++) {
 		all_cities.push_back(i);
 	}
 
@@ -89,17 +88,13 @@ int main(int argc, char *argv[]) {
 //*****************************************//
 void master() {
 	int rank, result;
-	int fact = factorial(NUM_CITIES);
 	MPI_Status status;
 	vector<int> best_path(NUM_CITIES_1,0);
 
 //-----------Set up the Queue-----------//
-	// Probably don't need to synchronize initially lol
 	for (int i = 2; i <= NUM_CITIES; ++i) {
 		vector<int> tmp(NUM_CITIES_1,0);
-		tmp[0] = 1;
-		tmp[1] = i;
-		tmp[NUM_CITIES] = 1;
+		tmp[0] = i;
 		mystack.push(tmp);
 	}
 		
@@ -137,20 +132,17 @@ void master() {
 	printf("Seeded workers\n");
 
 	
-	int count = 1;
-
-	
-	vector<int> message(NUM_CITIES+2,0);
+	vector<int> message(NUM_CITIES,0);
 	vector<int> diff;
 
 //----Recieve more requests and respond-----//
 	while (!mystack.empty() || pending_jobs != 0) { //queue is not empty
 
-		message.resize(NUM_CITIES+2);
+		message.resize(NUM_CITIES);
 
 		// Recieve request
 		MPI_Recv(&message[0],/* message buffer */
-		NUM_CITIES+2,        /* length */
+		NUM_CITIES,        /* length */
 		MPI_INT,             /* type int */
 		MPI_ANY_SOURCE,  	 /* receive from any sender */
 		MPI_ANY_TAG,     	 /* any type of message */
@@ -169,11 +161,11 @@ void master() {
 		vector<int> tmpworksorted(tmpwork);
 
 		// Print for testing
-		/*cout << "tmpwork: ";
+		cout << result << "  tmpwork: ";
 		for (int i = 0; i < tmpwork.size(); i++) {
 			cout << tmpwork[i] << " ";
 		}
-		cout << endl;*/
+		cout << endl;
 
 		// Check if current sum is already worse than best
 		if (result > best) {
@@ -198,8 +190,6 @@ void master() {
 			cout << endl;*/
 
 
-//-----------Share answer???-----------//
-
 			// If all values in 'work' are not 0, send result
 			if (diff.size() == 0) {
 				// maybe update best
@@ -214,14 +204,14 @@ void master() {
 			else if (diff.size() == 2) {
 				// Generate work
 				vector<int> new_work(tmpwork);
-				new_work[NUM_CITIES-2] = diff[0];
-				new_work[NUM_CITIES-1] = diff[1];
+				new_work[NUM_CITIES_1-2] = diff[0];
+				new_work[NUM_CITIES_1-1] = diff[1];
 				
 				mystack.push(new_work);
 
 				vector<int> new_work2(tmpwork);
-				new_work2[NUM_CITIES-2] = diff[1];
-				new_work2[NUM_CITIES-1] = diff[0];
+				new_work2[NUM_CITIES_1-2] = diff[1];
+				new_work2[NUM_CITIES_1-1] = diff[0];
 				
 				mystack.push(new_work2);
 			}	
@@ -229,7 +219,7 @@ void master() {
 				// Generate work
 				for (int i = 0; i < diff.size(); i++) {
 					vector<int> new_work(tmpwork);
-					new_work[NUM_CITIES-diff.size()] = diff[i];
+					new_work[NUM_CITIES_1-diff.size()] = diff[i];
 					
 					mystack.push(new_work);
 					
@@ -302,11 +292,11 @@ void master() {
 
 	printf("Best: %d\n",best);
 
-	cout << "Best path: ";
+	cout << "Best path: 1 ";
 	for (int i = 0; i < best_path.size(); i++) {
 		cout << best_path[i] << " ";
 	}
-	cout << endl;
+	cout << "1 " << endl;
 
 	// Get elapsed time
 	elapsed_time += MPI_Wtime();
@@ -322,7 +312,6 @@ void worker() {
 	// Load city data
 	inCities();
 
-	int result = INT_MAX;
 	int sum = 0;
 	vector<int> work;
 	MPI_Status status;
@@ -344,32 +333,39 @@ void worker() {
 		}
 
 		// Print for testing
-		/*cout << "Rank: " << myrank << " received: ";
+		cout << "Rank: " << myrank << " received: ";
 		for (int i = 0; i < work.size(); i++) {
 			cout << work[i] << " ";
 		}
-		cout << endl;*/
+		cout << endl;
 
 //-----------DO WORK-----------//
 		// COMPUTE SUM
-		for (int i = 0; i < NUM_CITIES_1; i++) {
-			if ((i+1) < NUM_CITIES_1) {
-				
-				int val1 = work[i];
-				int val2 = work[i+1];
-				
-				//cout << "VALS: (" << val1 << ", " << val2 << ")\n";
-				if (val1 != 0 && val2 != 0) {
-					sum += cities[val1-1][val2-1];
-				}
+		
+		// assume beginss and ends with 1
+		// beginning
+		sum += cities[0][work[0]-1];
+		// only do end edge if it's not a zero
+		if (work[NUM_CITIES_1-1] != 0) {
+			sum += cities[0][work[NUM_CITIES_1-1]-1];
+		}
+		
+		// loop over the rest
+		for (int i = 0; i < NUM_CITIES_1-1; i++) {
+			int val1 = work[i];
+			int val2 = work[i+1];
+			// make sure neither is a zero
+			if (val1 != 0 && val2 != 0) {
+				sum += cities[val1-1][val2-1];
 			}
 		}
 
+		
 		vector<int> message(work);
 		message.push_back(sum);
 
 		// Send a request for more work
-		MPI_Send(&message[0], NUM_CITIES+2, MPI_INT, 0, 0, MPI_COMM_WORLD);
+		MPI_Send(&message[0], NUM_CITIES, MPI_INT, 0, 0, MPI_COMM_WORLD);
 
 		//printf("Rank %d requesting more work\n",myrank);
 	}
@@ -402,7 +398,3 @@ void printCities() {
 	}
 }
 
-// Taken from: http://www.cplusplus.com/forum/unices/33379/
-int factorial(int n) {
-  return (n == 1 || n == 0) ? 1 : factorial(n - 1) * n;
-}
