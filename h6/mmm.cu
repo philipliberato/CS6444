@@ -269,14 +269,18 @@ void computeGpuMMM() {
 /*
   TODO:
 
-- find out warp size, block size should be a multiple of warp size
+- transpose B: minimizes bank conflicts and has better memory access
 
-- memory coalescing? chunks are aligned in either 32, 64, or 128 bytes
+- memory coalescing? chunks are aligned in either 32, 64, or 128 bytes (probs 128)
   need to divide by size of float or something (like cache blocking)
+  - all data structures need to be 128 byte aligned
+  - compute padding for A and B
+  - copy A and B to new arrays and add padding for each row
+  - floats are 4 bytes?
+
+- find out warp size, block size should be a multiple of warp size (probs 32 or something)
 
 - choose block_count and threads_per_block appropriately
-
-- transpose B: minimizes bank conflicts and has better memory access
 
 */
 
