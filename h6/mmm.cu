@@ -23,7 +23,7 @@ float *A_GPU, *B_GPU, *C_GPU;
 
 // TODO: tweak these?????? LOL
 const int BLOCK_COUNT = 16;
-const int THREADS_PER_BLOCK = 16;
+const int THREADS_PER_BLOCK = 256;
 
 //----------------------------------- Host Function Definitions -----------------------------------------
 
@@ -234,7 +234,9 @@ void computeGpuMMM() {
 	
 	// TODO: MAKE THIS KERNEL RIGHT
 	// probs need to pass dimensions of A, B, and maybe C (can compute C dims)
-	mmm_kernel <<<BLOCK_COUNT, THREADS_PER_BLOCK>>> (A_GPU, B_GPU, C_GPU, A_MD.dimension1, A_MD.dimension2, B_MD.dimension1, B_MD.dimension2);
+	dim3 threadsPerBlock(BLOCK_COUNT, BLOCK_COUNT);
+    dim3 numBlocks(THREADS_PER_BLOCK, THREADS_PER_BLOCK);
+	mmm_kernel <<<numBlocks, threadsPerBlock>>> (A_GPU, B_GPU, C_GPU, A_MD.dimension1, A_MD.dimension2, B_MD.dimension1, B_MD.dimension2);
 	
 	// Make the CPU main thread waite for the GPU kernel call to complete
 	cudaThreadSynchronize();  // This is only needed for timing and error-checking purposes
@@ -262,6 +264,21 @@ void computeGpuMMM() {
 	check_error(cudaFree(B_GPU));
 	check_error(cudaFree(C_GPU));
 }
+
+
+/*
+  TODO:
+
+- find out warp size, block size should be a multiple of warp size
+
+- memory coalescing? chunks are aligned in either 32, 64, or 128 bytes
+  need to divide by size of float or something (like cache blocking)
+
+- choose block_count and threads_per_block appropriately
+
+- transpose B: minimizes bank conflicts and has better memory access
+
+*/
 
 
 
