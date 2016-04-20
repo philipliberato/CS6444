@@ -22,8 +22,8 @@ float *A, *B, *C, *C_CPU;
 float *A_GPU, *B_GPU, *C_GPU;
 
 // TODO: tweak these?????? LOL
-const int BLOCK_COUNT = 14;
-const int THREADS_PER_BLOCK = 256;
+const int BLOCK_COUNT = 16;
+const int THREADS_PER_BLOCK = 16;
 
 //----------------------------------- Host Function Definitions -----------------------------------------
 
@@ -38,7 +38,7 @@ void check_error(cudaError e);
 
 //----------------------------------- CUDA Function Definitions -----------------------------------------
 // TODO: fix
-__global__ void mmm_kernel(float *A, float *B, float *C);
+__global__ void mmm_kernel(float *A, float *B, float *C, int Ax, int Ay, int Bx, int By);
 
 
 //--------------------------------------------- CODE ----------------------------------------------------
@@ -190,17 +190,24 @@ void check_error(cudaError e) {
 //---------- MY ADDED STUFF ----------//
 // TODO: MAKE THIS RIGHT 
 // KERNEL: A GPU kernel that does MMM
-__global__ void mmm_kernel(float *A, float *B, float *C) {
+__global__ void mmm_kernel(float *A, float *B, float *C, int Ax, int Ay, int Bx, int By) {
 
 	// CURRENTLY THIS DOES A WEIRD VECTOR ADD IDK
 
 	// Determine the index of the thread among all GPU threads	
-	int threadId = blockIdx.x * blockDim.x + threadIdx.x;
-	int threadCount = gridDim.x * blockDim.x; 
+	int i = blockIdx.x * blockDim.x + threadIdx.x;
+	int j = blockIdx.y * blockDim.y + threadIdx.y;
+	//int threadCount = gridDim.x * blockDim.x; 
 
-	// Calculate the vector sum for the indexes of vector the current thread is responsible for
-	for (int i = threadId; i < 100; i += threadCount) {	
-		C[i] = A[i] + B[i];
+	if (i < Ax && j < By) {
+		// Compute C[i][j]
+		// Multiply A row i with B row j and add it to sum
+		float sum = 0.0;
+		for (int x = 0; x < Ax; x++) {
+			sum += A[x+(i*Ay)] * B[(x*By)+j]; // Once B is transposed, flip it to be B[x][j]
+		} 
+		// Assign sum to C[i][j]
+		C[j+(i*By)] = sum;
 	}
 }
 
@@ -227,7 +234,7 @@ void computeGpuMMM() {
 	
 	// TODO: MAKE THIS KERNEL RIGHT
 	// probs need to pass dimensions of A, B, and maybe C (can compute C dims)
-	mmm_kernel <<<BLOCK_COUNT, THREADS_PER_BLOCK>>> (A_GPU, B_GPU, C_GPU);
+	mmm_kernel <<<BLOCK_COUNT, THREADS_PER_BLOCK>>> (A_GPU, B_GPU, C_GPU, A_MD.dimension1, A_MD.dimension2, B_MD.dimension1, B_MD.dimension2);
 	
 	// Make the CPU main thread waite for the GPU kernel call to complete
 	cudaThreadSynchronize();  // This is only needed for timing and error-checking purposes
@@ -239,9 +246,9 @@ void computeGpuMMM() {
 	check_error(cudaGetLastError());
 	
 	// Allocate CPU memory for the result
-	size_t sizeofC = C_MD.dimension1 * C_MD.dimension2 * sizeof(float);
-	float *C_CPU = (float *) malloc(sizeofC);
-	if (C_CPU == NULL) die("Error allocating CPU memory");
+	// size_t sizeofC = C_MD.dimension1 * C_MD.dimension2 * sizeof(float);
+	// float *C_CPU = (float *) malloc(sizeofC);
+	// if (C_CPU == NULL) die("Error allocating CPU memory");
 	
 	// Transfer result back to CPU
 	start = clock();	
