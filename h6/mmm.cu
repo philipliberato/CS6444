@@ -17,13 +17,13 @@ typedef struct {
 // Metadata variables describing dimensionalities of all data structures involved in the computation
 ArrayMetadata2D A_MD, B_MD, C_MD;
 // Pointers for input and output arrays in the host memory  
-float *A, *B, *C, *C_CPU;
+float *A, *B, *C, *C_CPU, *B_TRANS;
 // Pointers for input and output arrays in the device memory (NVIDIA DRAM)
 float *A_GPU, *B_GPU, *C_GPU;
 
 // TODO: tweak these?????? LOL
-const int BLOCK_COUNT = 16;
-const int THREADS_PER_BLOCK = 256;
+const int BLOCK_COUNT = 32;
+const int THREADS_PER_BLOCK = 512;
 
 //----------------------------------- Host Function Definitions -----------------------------------------
 
@@ -66,6 +66,31 @@ int main(int argc, char **argv) {
 	printf("Computation time in the CPU: %f seconds\n", elapsedCPU);
 
 	//---------- MY ADDED STUFF ----------//
+	// Transpose B
+	size_t sizeofB = B_MD.dimension1 * B_MD.dimension2 * sizeof(float);
+	B_TRANS = (float*) malloc(sizeofB);
+
+	// print trans of B
+	for (int j = 0; j < B_MD.dimension2; ++j) {
+        for (int i = 0; i < B_MD.dimension1; ++i) {
+            B_TRANS[i + j * B_MD.dimension1] = B[j + i * B_MD.dimension1];
+            //printf("%f ", B[j + i * B_MD.dimension1]);
+        }
+        //printf("\n");
+    }
+    // we could switch B's dimensions, but since we only ever input square matrices, we don't care :)
+
+    // print B first
+	// for (int i = 0; i < B_MD.dimension1 * B_MD.dimension2; i++) {
+	// 	printf("%f ", B[i]);
+	// }
+	// printf("\n\n");
+	// // print B_TRANS
+	// for (int i = 0; i < B_MD.dimension1 * B_MD.dimension2; i++) {
+	// 	printf("%f ", B_TRANS[i]);
+	// }
+	// printf("\n\n");
+
 	// MMM on the GPU
 	start = clock();
 	computeGpuMMM();
@@ -119,7 +144,7 @@ void copyMatricesToGPU() {
 	
 	size_t sizeofB = B_MD.dimension1 * B_MD.dimension2 * sizeof(float);
 	check_error(cudaMalloc((void **) &B_GPU, sizeofB));
-	check_error(cudaMemcpy(B_GPU, B, sizeofB, cudaMemcpyHostToDevice));
+	check_error(cudaMemcpy(B_GPU, B_TRANS, sizeofB, cudaMemcpyHostToDevice));
 	
 	size_t sizeofC = C_MD.dimension1 * C_MD.dimension2 * sizeof(float);
 	check_error(cudaMalloc((void **) &C_GPU, sizeofC));
@@ -162,7 +187,7 @@ void compareHostAndGpuOutput() {
 	for (int i = 0; i < totalElements; i++) {
 		if (fabs(C[i] - C_CPU[i]) > 0.01) {
 			mismatchCount++;
-			printf("mismatch at index %i: %f\t%f\n", i, C[i], C_CPU[i]);
+			//printf("mismatch at index %i: %f\t%f\n", i, C[i], C_CPU[i]);
 		}
 	}
 	if (mismatchCount > 0) {
@@ -204,7 +229,8 @@ __global__ void mmm_kernel(float *A, float *B, float *C, int Ax, int Ay, int Bx,
 		// Multiply A row i with B row j and add it to sum
 		float sum = 0.0;
 		for (int x = 0; x < Ax; x++) {
-			sum += A[x+(i*Ay)] * B[(x*By)+j]; // Once B is transposed, flip it to be B[x][j]
+			//sum += A[x+(i*Ay)] * B[(x*By)+j]; // for when B is NOT transposed
+			sum += A[x+(i*Ay)] * B[x+(j*By)]; // for when B IS transposed
 		} 
 		// Assign sum to C[i][j]
 		C[j+(i*By)] = sum;
@@ -273,10 +299,14 @@ void computeGpuMMM() {
 
 - memory coalescing? chunks are aligned in either 32, 64, or 128 bytes (probs 128)
   need to divide by size of float or something (like cache blocking)
-  - all data structures need to be 128 byte aligned
+   - floats are 4 bytes
+  - warp size is 32
+  - all data structures need to be 128 (32*4) byte aligned
   - compute padding for A and B
-  - copy A and B to new arrays and add padding for each row
-  - floats are 4 bytes?
+  	+ find next value greater than or equal to Ax that's a multiple of 32, call it next32
+  	+ take next32 - Ax to get how much padding you need
+  	+ pad A by copying it and adding zeroes as padding to each row
+  	+ same process for padding B, and we know its dimensions are the same as A
 
 - find out warp size, block size should be a multiple of warp size (probs 32 or something)
 
