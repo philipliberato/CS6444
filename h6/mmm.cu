@@ -20,10 +20,14 @@ ArrayMetadata2D A_MD, B_MD, C_MD;
 float *A, *B, *C, *C_CPU, *B_TRANS;
 // Pointers for input and output arrays in the device memory (NVIDIA DRAM)
 float *A_GPU, *B_GPU, *C_GPU;
+// Pointers for padded A and B, and unpadded C_RES, for the GPU final result
+float *A_PAD, *B_PAD, *C_RES;
 
 // TODO: tweak these?????? LOL
 const int BLOCK_COUNT = 32;
 const int THREADS_PER_BLOCK = 512;
+const int WARP_SIZE = 32;
+int pad;
 
 //----------------------------------- Host Function Definitions -----------------------------------------
 
@@ -38,7 +42,7 @@ void check_error(cudaError e);
 
 //----------------------------------- CUDA Function Definitions -----------------------------------------
 // TODO: fix
-__global__ void mmm_kernel(float *A, float *B, float *C, int Ax, int Ay, int Bx, int By);
+__global__ void mmm_kernel(float *A, float *B, float *C, int Ax, int Ay, int Bx, int By, int pad);
 
 
 //--------------------------------------------- CODE ----------------------------------------------------
@@ -60,10 +64,10 @@ int main(int argc, char **argv) {
 
 	// Matrix matrix multiplication in the CPU
 	clock_t start = clock();	
-	computeCpuMMM();
+	// computeCpuMMM();
 	clock_t end = clock();
-	double elapsedCPU = (end - start) / (double) CLOCKS_PER_SEC;
-	printf("Computation time in the CPU: %f seconds\n", elapsedCPU);
+	// double elapsedCPU = (end - start) / (double) CLOCKS_PER_SEC;
+	// printf("Computation time in the CPU: %f seconds\n", elapsedCPU);
 
 	//---------- MY ADDED STUFF ----------//
 	// Transpose B
@@ -80,14 +84,54 @@ int main(int argc, char **argv) {
     }
     // we could switch B's dimensions, but since we only ever input square matrices, we don't care :)
 
+    // Pad A and B
+    // We know they're the same size so do it at the same time
+    int Ax = A_MD.dimension1;
+    int count = Ax;
+    while (count % WARP_SIZE != 0) {
+    	count++;
+    }
+    pad = count - Ax;
+
+    // Allocate PAD arrays
+    size_t sizeofPADs = (A_MD.dimension1 + pad) * A_MD.dimension2 * sizeof(float);
+	A_PAD = (float*) malloc(sizeofPADs);
+	B_PAD = (float*) malloc(sizeofPADs);
+
+	int rowcount = 0;
+	int padindex = 0;
+	int p = 0;
+    for (int i = 0; i < A_MD.dimension1 * A_MD.dimension2; i++) {
+    	// Do padding because we're at the end of a row
+    	if (rowcount == Ax) {
+    		// Add however much padding there is
+    		while (p < pad) {
+    			A_PAD[padindex] = 0.0;
+    			B_PAD[padindex] = 0.0;
+    			p++;
+    			padindex++;
+    		}
+    		p = 0;
+    		rowcount = 0;
+    		i--;
+    	}
+    	else {
+    		A_PAD[padindex] = A[i];
+    		B_PAD[padindex] = B_TRANS[i];
+    		padindex++;
+	    	rowcount++;
+	    }
+    }
+
+
     // print B first
 	// for (int i = 0; i < B_MD.dimension1 * B_MD.dimension2; i++) {
-	// 	printf("%f ", B[i]);
+	// 	printf("%f ", B_TRANS[i]);
 	// }
 	// printf("\n\n");
 	// // print B_TRANS
-	// for (int i = 0; i < B_MD.dimension1 * B_MD.dimension2; i++) {
-	// 	printf("%f ", B_TRANS[i]);
+	// for (int i = 0; i < (A_MD.dimension1 + pad) * A_MD.dimension2; i++) {
+	// 	printf("%f ", B_PAD[i]);
 	// }
 	// printf("\n\n");
 
@@ -99,14 +143,45 @@ int main(int argc, char **argv) {
 	printf("Computation time in the GPU: %f seconds\n", elapsedGPU);
 	
 	// Compute the speedup or slowdown
-	if (elapsedGPU > elapsedCPU) {
-		printf("\nCPU outperformed GPU by %.2fx\n", (float) elapsedGPU / (float) elapsedCPU);
-	} else { 
-		printf("\nGPU outperformed CPU by %.2fx\n", (float) elapsedCPU / (float) elapsedGPU);
-	}
+	// if (elapsedGPU > elapsedCPU) {
+	// 	printf("\nCPU outperformed GPU by %.2fx\n", (float) elapsedGPU / (float) elapsedCPU);
+	// } else { 
+	// 	printf("\nGPU outperformed CPU by %.2fx\n", (float) elapsedCPU / (float) elapsedGPU);
+	// }
 	
+	// Print out CPU result
+	// for (int i = 0; i < C_MD.dimension1 * C_MD.dimension2; i++) {
+	// 	printf("%f ", C[i]);
+	// }
+	// printf("\n\n");
+	// // Print out GPU result, which is C_CPU
+	// for (int i = 0; i < (C_MD.dimension1 + pad) * C_MD.dimension2; i++) {
+	// 	printf("%f ", C_CPU[i]);
+	// }
+	// printf("\n\n");
+
+	// Copy C_CPU to a smaller C_RES
+	
+	// Allocate C_RES to be normal size of C
+	size_t sizeofCRES = C_MD.dimension1 * C_MD.dimension2 * sizeof(float);
+	C_RES = (float*) malloc(sizeofCRES);
+
+	int offset = 0;
+	for (int i = 0; i < C_MD.dimension1 * C_MD.dimension2; i++) {
+		if (i % C_MD.dimension1 == 0 && i != 0) {
+			offset += pad;
+		}
+		C_RES[i] = C_CPU[i + offset];
+	}
+
+	// Print C_REST
+	// for (int i = 0; i < C_MD.dimension1 * C_MD.dimension2; i++) {
+	// 	printf("%f ", C_RES[i]);
+	// }
+
+
 	// Check the correctness of the GPU results
-	compareHostAndGpuOutput();
+	//compareHostAndGpuOutput();
 
 	return 0;
 }
@@ -138,21 +213,21 @@ void allocateAndInitializeAB() {
 // Allocate memory in the GPU for all matrices, and copy A and B content from the host CPU memory to the GPU memory
 void copyMatricesToGPU() {
 	
-	size_t sizeofA = A_MD.dimension1 * A_MD.dimension2 * sizeof(float);
+	size_t sizeofA = (A_MD.dimension1 + pad) * A_MD.dimension2 * sizeof(float);
 	check_error(cudaMalloc((void **) &A_GPU, sizeofA));
-	check_error(cudaMemcpy(A_GPU, A, sizeofA, cudaMemcpyHostToDevice));
+	check_error(cudaMemcpy(A_GPU, A_PAD, sizeofA, cudaMemcpyHostToDevice));
 	
-	size_t sizeofB = B_MD.dimension1 * B_MD.dimension2 * sizeof(float);
+	size_t sizeofB = (B_MD.dimension1 + pad) * B_MD.dimension2 * sizeof(float);
 	check_error(cudaMalloc((void **) &B_GPU, sizeofB));
-	check_error(cudaMemcpy(B_GPU, B_TRANS, sizeofB, cudaMemcpyHostToDevice));
+	check_error(cudaMemcpy(B_GPU, B_PAD, sizeofB, cudaMemcpyHostToDevice));
 	
-	size_t sizeofC = C_MD.dimension1 * C_MD.dimension2 * sizeof(float);
+	size_t sizeofC = (C_MD.dimension1 + pad) * C_MD.dimension2 * sizeof(float);
 	check_error(cudaMalloc((void **) &C_GPU, sizeofC));
 }
 
 // Copy results from C_GPU which is in GPU card memory to C_CPU which is in the host CPU for result comparison
 void copyResultFromGPU() {
-	size_t sizeofC = C_MD.dimension1 * C_MD.dimension2 * sizeof(float);
+	size_t sizeofC = (C_MD.dimension1+pad) * C_MD.dimension2 * sizeof(float);
 	C_CPU = (float*) malloc(sizeofC);
 	check_error(cudaMemcpy(C_CPU, C_GPU, sizeofC, cudaMemcpyDeviceToHost));
 }
@@ -185,9 +260,9 @@ void compareHostAndGpuOutput() {
 	int totalElements = C_MD.dimension1 * C_MD.dimension2;
 	int mismatchCount = 0;
 	for (int i = 0; i < totalElements; i++) {
-		if (fabs(C[i] - C_CPU[i]) > 0.01) {
+		if (fabs(C[i] - C_RES[i]) > 0.01) {
 			mismatchCount++;
-			//printf("mismatch at index %i: %f\t%f\n", i, C[i], C_CPU[i]);
+			printf("mismatch at index %i: %f\t%f\n", i, C[i], C_RES[i]);
 		}
 	}
 	if (mismatchCount > 0) {
@@ -215,7 +290,7 @@ void check_error(cudaError e) {
 //---------- MY ADDED STUFF ----------//
 // TODO: MAKE THIS RIGHT 
 // KERNEL: A GPU kernel that does MMM
-__global__ void mmm_kernel(float *A, float *B, float *C, int Ax, int Ay, int Bx, int By) {
+__global__ void mmm_kernel(float *A, float *B, float *C, int Ax, int Ay, int Bx, int By, int pad) {
 
 	// CURRENTLY THIS DOES A WEIRD VECTOR ADD IDK
 
@@ -230,10 +305,10 @@ __global__ void mmm_kernel(float *A, float *B, float *C, int Ax, int Ay, int Bx,
 		float sum = 0.0;
 		for (int x = 0; x < Ax; x++) {
 			//sum += A[x+(i*Ay)] * B[(x*By)+j]; // for when B is NOT transposed
-			sum += A[x+(i*Ay)] * B[x+(j*By)]; // for when B IS transposed
+			sum += A[x+(i*(Ay+pad))] * B[x+(j*(By+pad))]; // for when B IS transposed
 		} 
 		// Assign sum to C[i][j]
-		C[j+(i*By)] = sum;
+		C[j+(i*(By+pad))] = sum;
 	}
 }
 
@@ -261,8 +336,8 @@ void computeGpuMMM() {
 	// TODO: MAKE THIS KERNEL RIGHT
 	// probs need to pass dimensions of A, B, and maybe C (can compute C dims)
 	dim3 threadsPerBlock(BLOCK_COUNT, BLOCK_COUNT);
-    dim3 numBlocks(THREADS_PER_BLOCK, THREADS_PER_BLOCK);
-	mmm_kernel <<<numBlocks, threadsPerBlock>>> (A_GPU, B_GPU, C_GPU, A_MD.dimension1, A_MD.dimension2, B_MD.dimension1, B_MD.dimension2);
+    	dim3 numBlocks(THREADS_PER_BLOCK, THREADS_PER_BLOCK);
+	mmm_kernel <<<numBlocks, threadsPerBlock>>> (A_GPU, B_GPU, C_GPU, A_MD.dimension1, A_MD.dimension2, B_MD.dimension1, B_MD.dimension2, pad);
 	
 	// Make the CPU main thread waite for the GPU kernel call to complete
 	cudaThreadSynchronize();  // This is only needed for timing and error-checking purposes
@@ -299,9 +374,9 @@ void computeGpuMMM() {
 
 - memory coalescing? chunks are aligned in either 32, 64, or 128 bytes (probs 128)
   need to divide by size of float or something (like cache blocking)
-   - floats are 4 bytes
+  - floats are 4 bytes
   - warp size is 32
-  - all data structures need to be 128 (32*4) byte aligned
+  - all data structures need to be 128 (32*4) byte aligned (aka 32 float aligned)
   - compute padding for A and B
   	+ find next value greater than or equal to Ax that's a multiple of 32, call it next32
   	+ take next32 - Ax to get how much padding you need
@@ -313,9 +388,5 @@ void computeGpuMMM() {
 - choose block_count and threads_per_block appropriately
 
 */
-
-
-
-
 
 
