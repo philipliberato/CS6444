@@ -10,7 +10,7 @@ export dims
 module load cuda
 
 # Re-compile the program
-nvcc -O3 mmm.cu -o mmm
+nvcc -arch=sm_30 -O3 mmm.cu -o mmm
 
 # Submit job
 sbatch execute.sh

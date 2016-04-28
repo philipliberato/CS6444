@@ -1,5 +1,7 @@
 // mmm.cu
 
+// Guide used: http://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html
+
 #include <stdio.h>
 #include <sys/time.h>
 #include <stdlib.h>
@@ -24,9 +26,10 @@ float *A_GPU, *B_GPU, *C_GPU;
 float *A_PAD, *B_PAD, *C_RES;
 
 // TODO: tweak these?????? LOL
-const int BLOCK_COUNT = 32;
-const int THREADS_PER_BLOCK = 512;
-const int WARP_SIZE = 32;
+//const int BLOCK_COUNT = 32;
+//const int THREADS_PER_BLOCK = 256;
+const int BLOCK_SIZE = 16;
+// const int WARP_SIZE = 32;
 int pad;
 
 //----------------------------------- Host Function Definitions -----------------------------------------
@@ -42,8 +45,7 @@ void check_error(cudaError e);
 
 //----------------------------------- CUDA Function Definitions -----------------------------------------
 // TODO: fix
-__global__ void mmm_kernel(float *A, float *B, float *C, int Ax, int Ay, int Bx, int By, int pad);
-
+__global__ void mmm_kernel(float *A, float *B, float *C, int Ax, int By);
 
 //--------------------------------------------- CODE ----------------------------------------------------
 
@@ -88,13 +90,42 @@ int main(int argc, char **argv) {
     // We know they're the same size so do it at the same time
     int Ax = A_MD.dimension1;
     int count = Ax;
-    while (count % WARP_SIZE != 0) {
+    while (count % BLOCK_SIZE != 0) {
     	count++;
     }
     pad = count - Ax;
 
+ //    // Allocate PAD arrays
+ //    size_t sizeofPADs = (A_MD.dimension1 + pad) * A_MD.dimension2 * sizeof(float);
+	// A_PAD = (float*) malloc(sizeofPADs);
+	// B_PAD = (float*) malloc(sizeofPADs);
+
+	// int rowcount = 0;
+	// int padindex = 0;
+	// int p = 0;
+ //    for (int i = 0; i < A_MD.dimension1 * A_MD.dimension2; i++) {
+ //    	// Do padding because we're at the end of a row
+ //    	if (rowcount == Ax) {
+ //    		// Add however much padding there is
+ //    		while (p < pad) {
+ //    			A_PAD[padindex] = 0.0;
+ //    			B_PAD[padindex] = 0.0;
+ //    			p++;
+ //    			padindex++;
+ //    		}
+ //    		p = 0;
+ //    		rowcount = 0;
+ //    		i--;
+ //    	}
+ //    	else {
+ //    		A_PAD[padindex] = A[i];
+ //    		B_PAD[padindex] = B_TRANS[i];
+ //    		padindex++;
+	//     	rowcount++;
+	//     }
+ //    }
     // Allocate PAD arrays
-    size_t sizeofPADs = (A_MD.dimension1 + pad) * A_MD.dimension2 * sizeof(float);
+    size_t sizeofPADs = (A_MD.dimension1 + pad) * (A_MD.dimension2 + pad) * sizeof(float);
 	A_PAD = (float*) malloc(sizeofPADs);
 	B_PAD = (float*) malloc(sizeofPADs);
 
@@ -122,6 +153,13 @@ int main(int argc, char **argv) {
 	    	rowcount++;
 	    }
     }
+    // Add however many rows of padding we need
+    for (int i = A_MD.dimension2; i < (A_MD.dimension2 + pad); i++) {
+    	for (int j = 0; j < (A_MD.dimension1 + pad); j++) {
+    		A_PAD[i * (A_MD.dimension1 + pad) + j] = 0.0;
+    		B_PAD[i * (B_MD.dimension1 + pad) + j] = 0.0;
+    	}
+    }
 
 
     // print B first
@@ -129,8 +167,8 @@ int main(int argc, char **argv) {
 	// 	printf("%f ", B_TRANS[i]);
 	// }
 	// printf("\n\n");
-	// // print B_TRANS
-	// for (int i = 0; i < (A_MD.dimension1 + pad) * A_MD.dimension2; i++) {
+	// // print B_PAD
+	// for (int i = 0; i < (A_MD.dimension1 + pad) * (A_MD.dimension2 + pad); i++) {
 	// 	printf("%f ", B_PAD[i]);
 	// }
 	// printf("\n\n");
@@ -181,7 +219,7 @@ int main(int argc, char **argv) {
 
 
 	// Check the correctness of the GPU results
-	//compareHostAndGpuOutput();
+	// compareHostAndGpuOutput();
 
 	return 0;
 }
@@ -213,21 +251,21 @@ void allocateAndInitializeAB() {
 // Allocate memory in the GPU for all matrices, and copy A and B content from the host CPU memory to the GPU memory
 void copyMatricesToGPU() {
 	
-	size_t sizeofA = (A_MD.dimension1 + pad) * A_MD.dimension2 * sizeof(float);
+	size_t sizeofA = (A_MD.dimension1 + pad) * (A_MD.dimension2 + pad) * sizeof(float);
 	check_error(cudaMalloc((void **) &A_GPU, sizeofA));
 	check_error(cudaMemcpy(A_GPU, A_PAD, sizeofA, cudaMemcpyHostToDevice));
 	
-	size_t sizeofB = (B_MD.dimension1 + pad) * B_MD.dimension2 * sizeof(float);
+	size_t sizeofB = (B_MD.dimension1 + pad) * (B_MD.dimension2 + pad) * sizeof(float);
 	check_error(cudaMalloc((void **) &B_GPU, sizeofB));
 	check_error(cudaMemcpy(B_GPU, B_PAD, sizeofB, cudaMemcpyHostToDevice));
 	
-	size_t sizeofC = (C_MD.dimension1 + pad) * C_MD.dimension2 * sizeof(float);
+	size_t sizeofC = (C_MD.dimension1 + pad) * (C_MD.dimension2 + pad) * sizeof(float);
 	check_error(cudaMalloc((void **) &C_GPU, sizeofC));
 }
 
 // Copy results from C_GPU which is in GPU card memory to C_CPU which is in the host CPU for result comparison
 void copyResultFromGPU() {
-	size_t sizeofC = (C_MD.dimension1+pad) * C_MD.dimension2 * sizeof(float);
+	size_t sizeofC = (C_MD.dimension1 + pad) * (C_MD.dimension2 + pad) * sizeof(float);
 	C_CPU = (float*) malloc(sizeofC);
 	check_error(cudaMemcpy(C_CPU, C_GPU, sizeofC, cudaMemcpyDeviceToHost));
 }
@@ -290,26 +328,100 @@ void check_error(cudaError e) {
 //---------- MY ADDED STUFF ----------//
 // TODO: MAKE THIS RIGHT 
 // KERNEL: A GPU kernel that does MMM
-__global__ void mmm_kernel(float *A, float *B, float *C, int Ax, int Ay, int Bx, int By, int pad) {
+// __global__ void mmm_kernel(float *A, float *B, float *C, int Ax, int Ay, int Bx, int By, int pad) {
+
+// 	// CURRENTLY THIS DOES A WEIRD VECTOR ADD IDK
+
+// 	// Determine the index of the thread among all GPU threads	
+// 	int i = blockIdx.x * blockDim.x + threadIdx.x;
+// 	int j = blockIdx.y * blockDim.y + threadIdx.y;
+// 	//int threadCount = gridDim.x * blockDim.x; 
+
+// 	if (i < Ax && j < By) {
+// 		// Compute C[i][j]
+// 		// Multiply A row i with B row j and add it to sum
+// 		float sum = 0.0;
+// 		for (int x = 0; x < Ax; x++) {
+// 			//sum += A[x+(i*Ay)] * B[(x*By)+j]; // for when B is NOT transposed
+// 			sum += A[x+(i*(Ay+pad))] * B[x+(j*(By+pad))]; // for when B IS transposed
+// 		} 
+// 		// Assign sum to C[i][j]
+// 		C[j+(i*(By+pad))] = sum;
+// 	}
+// }
+
+__device__ float *getSubMatrix(float *M, int w, int r, int c) {
+	return &M[(w * BLOCK_SIZE * r) + (BLOCK_SIZE * c)];
+}
+
+__global__ void mmm_kernel(float *A, float *B, float *C, int Ax, int By) {
 
 	// CURRENTLY THIS DOES A WEIRD VECTOR ADD IDK
 
 	// Determine the index of the thread among all GPU threads	
-	int i = blockIdx.x * blockDim.x + threadIdx.x;
-	int j = blockIdx.y * blockDim.y + threadIdx.y;
-	//int threadCount = gridDim.x * blockDim.x; 
+	// int i = blockIdx.x * blockDim.x + threadIdx.x;
+	// int j = blockIdx.y * blockDim.y + threadIdx.y;
 
-	if (i < Ax && j < By) {
-		// Compute C[i][j]
-		// Multiply A row i with B row j and add it to sum
-		float sum = 0.0;
-		for (int x = 0; x < Ax; x++) {
-			//sum += A[x+(i*Ay)] * B[(x*By)+j]; // for when B is NOT transposed
-			sum += A[x+(i*(Ay+pad))] * B[x+(j*(By+pad))]; // for when B IS transposed
-		} 
-		// Assign sum to C[i][j]
-		C[j+(i*(By+pad))] = sum;
+	// // Make sure we're in bounds of the C array
+	// if (i >= Ax || j >= By) {
+	// 	return;
+	// }
+
+	//int bRow = blockIdx.x;
+	//int bCol = blockIdx.y;
+
+	//int r = threadIdx.x;
+	//int c = threadIdx.y;
+
+	// Check again if within bounds????
+	// if ((r * Ax + c) >= Ax * By) {
+	// 	return;
+	// }
+
+	// Store blocks in shared memory
+	__shared__ float Ashared[BLOCK_SIZE][BLOCK_SIZE];
+	__shared__ float Bshared[BLOCK_SIZE][BLOCK_SIZE];
+
+	// Get submatrix of C
+	float *subC = &C[(Ax * BLOCK_SIZE * blockIdx.x) + (BLOCK_SIZE * blockIdx.y)]; //getSubMatrix(C, Ax, bRow, bCol);
+
+	float sum = 0.0;
+
+	// For each submatrix in A/B
+	// Multiply subA subB i,j and add to sum
+	int num_blocks = Ax / BLOCK_SIZE;
+
+	int rAxc = threadIdx.x * Ax + threadIdx.y;
+	int rByc = threadIdx.x * By + threadIdx.y;
+
+	float *subA, *subB;
+
+
+	for (int s = 0; s < num_blocks; s++) {
+		// Get submatrix of A
+		subA = &A[(Ax * BLOCK_SIZE * blockIdx.x) + (BLOCK_SIZE * s)];	//getSubMatrix(A, Ax, bRow, s);
+
+		// Get submatrix of B
+		subB = &B[(By * BLOCK_SIZE * blockIdx.y) + (BLOCK_SIZE * s)];	//getSubMatrix(B, By, bCol, s); // make sure this uses bCol!!! not bRow omg
+
+        // Each thread loads one value
+        Ashared[threadIdx.x][threadIdx.y] = subA[rAxc];
+        Bshared[threadIdx.x][threadIdx.y] = subB[rByc];
+
+        // Synch to make sure everything is loaded before doing any computation
+        __syncthreads();
+
+        // Multiply this thread's row and column together
+        for (int k = 0; k < BLOCK_SIZE; k++) {
+            sum += Ashared[threadIdx.x][k] * Bshared[threadIdx.y][k];
+        }
+
+        // Synch again so that everyone is done
+        __syncthreads();
 	}
+
+	// Write subC back out
+	subC[rAxc] = sum;
 }
 
 // DO IT TO IT
@@ -333,13 +445,11 @@ void computeGpuMMM() {
 	// affect the performance of the kernel.
 	//add_vectors_kernel <<<BLOCK_COUNT, THREADS_PER_BLOCK>>> (A_GPU, B_GPU, C_GPU, N);
 	
-	// TODO: MAKE THIS KERNEL RIGHT
-	// probs need to pass dimensions of A, B, and maybe C (can compute C dims)
-	dim3 threadsPerBlock(BLOCK_COUNT, BLOCK_COUNT);
-    	dim3 numBlocks(THREADS_PER_BLOCK, THREADS_PER_BLOCK);
-	mmm_kernel <<<numBlocks, threadsPerBlock>>> (A_GPU, B_GPU, C_GPU, A_MD.dimension1, A_MD.dimension2, B_MD.dimension1, B_MD.dimension2, pad);
+	dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 numBlocks((A_MD.dimension1 + pad) / threadsPerBlock.x, (B_MD.dimension2 + pad) / threadsPerBlock.y);
+	mmm_kernel <<<numBlocks, threadsPerBlock>>> (A_GPU, B_GPU, C_GPU, A_MD.dimension1 + pad, B_MD.dimension2 + pad);
 	
-	// Make the CPU main thread waite for the GPU kernel call to complete
+	// Make the CPU main thread wait for the GPU kernel call to complete
 	cudaThreadSynchronize();  // This is only needed for timing and error-checking purposes
 	end = clock();
 	elapsed = (end - start) / (double) CLOCKS_PER_SEC;
