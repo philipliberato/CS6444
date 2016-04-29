@@ -95,35 +95,6 @@ int main(int argc, char **argv) {
     }
     pad = count - Ax;
 
- //    // Allocate PAD arrays
- //    size_t sizeofPADs = (A_MD.dimension1 + pad) * A_MD.dimension2 * sizeof(float);
-	// A_PAD = (float*) malloc(sizeofPADs);
-	// B_PAD = (float*) malloc(sizeofPADs);
-
-	// int rowcount = 0;
-	// int padindex = 0;
-	// int p = 0;
- //    for (int i = 0; i < A_MD.dimension1 * A_MD.dimension2; i++) {
- //    	// Do padding because we're at the end of a row
- //    	if (rowcount == Ax) {
- //    		// Add however much padding there is
- //    		while (p < pad) {
- //    			A_PAD[padindex] = 0.0;
- //    			B_PAD[padindex] = 0.0;
- //    			p++;
- //    			padindex++;
- //    		}
- //    		p = 0;
- //    		rowcount = 0;
- //    		i--;
- //    	}
- //    	else {
- //    		A_PAD[padindex] = A[i];
- //    		B_PAD[padindex] = B_TRANS[i];
- //    		padindex++;
-	//     	rowcount++;
-	//     }
- //    }
     // Allocate PAD arrays
     size_t sizeofPADs = (A_MD.dimension1 + pad) * (A_MD.dimension2 + pad) * sizeof(float);
 	A_PAD = (float*) malloc(sizeofPADs);
@@ -356,34 +327,17 @@ __device__ float *getSubMatrix(float *M, int w, int r, int c) {
 
 __global__ void mmm_kernel(float *A, float *B, float *C, int Ax, int By) {
 
-	// CURRENTLY THIS DOES A WEIRD VECTOR ADD IDK
-
-	// Determine the index of the thread among all GPU threads	
-	// int i = blockIdx.x * blockDim.x + threadIdx.x;
-	// int j = blockIdx.y * blockDim.y + threadIdx.y;
-
-	// // Make sure we're in bounds of the C array
-	// if (i >= Ax || j >= By) {
-	// 	return;
-	// }
-
-	//int bRow = blockIdx.x;
-	//int bCol = blockIdx.y;
-
-	//int r = threadIdx.x;
-	//int c = threadIdx.y;
-
-	// Check again if within bounds????
-	// if ((r * Ax + c) >= Ax * By) {
-	// 	return;
-	// }
+	// Get thread ID within the block
+	// int tid = threadIdx.x + threadIdx.y * blockDim.x;
+	// // Get warp ID
+	// int warpid = tid / WARP_SIZE;
 
 	// Store blocks in shared memory
 	__shared__ float Ashared[BLOCK_SIZE][BLOCK_SIZE];
 	__shared__ float Bshared[BLOCK_SIZE][BLOCK_SIZE];
 
 	// Get submatrix of C
-	float *subC = &C[(Ax * BLOCK_SIZE * blockIdx.x) + (BLOCK_SIZE * blockIdx.y)]; //getSubMatrix(C, Ax, bRow, bCol);
+	float *subC = &C[(Ax * BLOCK_SIZE * blockIdx.y) + (BLOCK_SIZE * blockIdx.x)]; //getSubMatrix(C, Ax, bRow, bCol);
 
 	float sum = 0.0;
 
@@ -391,29 +345,32 @@ __global__ void mmm_kernel(float *A, float *B, float *C, int Ax, int By) {
 	// Multiply subA subB i,j and add to sum
 	int num_blocks = Ax / BLOCK_SIZE;
 
-	int rAxc = threadIdx.x * Ax + threadIdx.y;
-	int rByc = threadIdx.x * By + threadIdx.y;
+	int rAxc = threadIdx.y * Ax + threadIdx.x;
+	int rByc = threadIdx.y * By + threadIdx.x;
 
 	float *subA, *subB;
 
 
 	for (int s = 0; s < num_blocks; s++) {
 		// Get submatrix of A
-		subA = &A[(Ax * BLOCK_SIZE * blockIdx.x) + (BLOCK_SIZE * s)];	//getSubMatrix(A, Ax, bRow, s);
+		subA = &A[(Ax * BLOCK_SIZE * blockIdx.y) + (BLOCK_SIZE * s)];	//getSubMatrix(A, Ax, bRow, s);
 
 		// Get submatrix of B
-		subB = &B[(By * BLOCK_SIZE * blockIdx.y) + (BLOCK_SIZE * s)];	//getSubMatrix(B, By, bCol, s); // make sure this uses bCol!!! not bRow omg
+		subB = &B[(By * BLOCK_SIZE * blockIdx.x) + (BLOCK_SIZE * s)];	//getSubMatrix(B, By, bCol, s); // make sure this uses bCol!!! not bRow omg
 
-        // Each thread loads one value
-        Ashared[threadIdx.x][threadIdx.y] = subA[rAxc];
-        Bshared[threadIdx.x][threadIdx.y] = subB[rByc];
+		// First warp loads values
+		// if (warpid == 0) {	
+	        // Each thread loads a few values in the block
+	        Ashared[threadIdx.y][threadIdx.x] = subA[rAxc];
+	        Bshared[threadIdx.y][threadIdx.x] = subB[rByc];
+		// }
 
         // Synch to make sure everything is loaded before doing any computation
         __syncthreads();
 
         // Multiply this thread's row and column together
         for (int k = 0; k < BLOCK_SIZE; k++) {
-            sum += Ashared[threadIdx.x][k] * Bshared[threadIdx.y][k];
+            sum += Ashared[threadIdx.y][k] * Bshared[threadIdx.x][k];
         }
 
         // Synch again so that everyone is done
@@ -446,7 +403,7 @@ void computeGpuMMM() {
 	//add_vectors_kernel <<<BLOCK_COUNT, THREADS_PER_BLOCK>>> (A_GPU, B_GPU, C_GPU, N);
 	
 	dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 numBlocks((A_MD.dimension1 + pad) / threadsPerBlock.x, (B_MD.dimension2 + pad) / threadsPerBlock.y);
+	dim3 numBlocks((A_MD.dimension1 + pad) / threadsPerBlock.x, (B_MD.dimension2 + pad) / threadsPerBlock.y);
 	mmm_kernel <<<numBlocks, threadsPerBlock>>> (A_GPU, B_GPU, C_GPU, A_MD.dimension1 + pad, B_MD.dimension2 + pad);
 	
 	// Make the CPU main thread wait for the GPU kernel call to complete
