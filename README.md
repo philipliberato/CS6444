@@ -1,3 +1,4 @@
-# cs6444_hw5
-Homework 5
-Homework 6
+# CS 6444
+Graduate Introduction to Parallel Computing
+- Homework 5
+- Homework 6
